@@ -1,0 +1,5 @@
+{
+  "name": "AutoForm AI",
+  "description": "Intelligent document processing app that uses Gemini to automatically fill out forms based on source documents (e.g., medical letters, invoices).",
+  "requestFramePermissions": []
+}
