@@ -1,8 +1,15 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { FileData, FormResponse } from "../types";
 import { PdfFieldInfo } from "./pdfService";
+import { getApiKey } from "./apiKeyService";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAI = () => {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("Kein API Key gesetzt. Bitte gib deinen Gemini API Key ein.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 const responseSchema: Schema = {
   type: Type.OBJECT,
@@ -130,7 +137,8 @@ export const processDocuments = async (
   `;
 
   try {
-    const modelId = "gemini-3-flash-preview";
+    const ai = getAI();
+    const modelId = "gemini-2.0-flash";
 
     const response = await ai.models.generateContent({
       model: modelId,
