@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { AppStatus, FileData, FormResponse } from './types';
 import { FileUpload } from './components/FileUpload';
 import { ReviewPanel } from './components/ReviewPanel';
+import { ApiKeyModal } from './components/ApiKeyModal';
 import { processDocuments } from './services/geminiService';
 import { getPdfFields, PdfFieldInfo } from './services/pdfService';
-import { Bot, Sparkles, ArrowRight, FileCheck2, ScanText, Loader2, AlertTriangle, FileText, Check } from 'lucide-react';
+import { getApiKey, setApiKey, hasApiKey } from './services/apiKeyService';
+import { Bot, Sparkles, ArrowRight, FileCheck2, ScanText, Loader2, AlertTriangle, FileText, Check, Settings } from 'lucide-react';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
@@ -13,6 +15,12 @@ const App: React.FC = () => {
   const [pdfFields, setPdfFields] = useState<PdfFieldInfo[]>([]);
   const [responseData, setResponseData] = useState<FormResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(!hasApiKey());
+
+  const handleSaveApiKey = (key: string) => {
+    setApiKey(key);
+    setShowApiKeyModal(false);
+  };
 
   useEffect(() => {
     const analyzePdf = async () => {
@@ -55,14 +63,27 @@ const App: React.FC = () => {
   if (status === AppStatus.REVIEW && responseData && formFile && sourceFile) {
     return (
       <div className="min-h-screen bg-slate-50">
+        <ApiKeyModal
+          isOpen={showApiKeyModal}
+          onSave={handleSaveApiKey}
+          onClose={() => setShowApiKeyModal(false)}
+          currentKey={getApiKey() || ''}
+        />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 h-16 flex items-center">
+          <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <div className="bg-indigo-600 p-1.5 rounded-lg">
                 <Bot className="w-5 h-5 text-white" />
               </div>
               <span className="font-bold text-lg text-slate-900">AutoForm AI</span>
             </div>
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+              title="API Key Einstellungen"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
           </div>
         </header>
         <ReviewPanel 
@@ -79,6 +100,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+      <ApiKeyModal
+        isOpen={showApiKeyModal}
+        onSave={handleSaveApiKey}
+        onClose={hasApiKey() ? () => setShowApiKeyModal(false) : undefined}
+        currentKey={getApiKey() || ''}
+      />
       {/* Header */}
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
@@ -91,10 +118,19 @@ const App: React.FC = () => {
               <p className="text-xs text-slate-500 font-medium">Intelligent Document Processing</p>
             </div>
           </div>
-          <div className="hidden md:flex items-center space-x-6 text-sm font-medium text-slate-600">
-            <span className="flex items-center"><ScanText className="w-4 h-4 mr-2" />1. Scan</span>
-            <span className="flex items-center"><Sparkles className="w-4 h-4 mr-2" />2. Extract</span>
-            <span className="flex items-center"><FileCheck2 className="w-4 h-4 mr-2" />3. Review</span>
+          <div className="flex items-center space-x-4">
+            <div className="hidden md:flex items-center space-x-6 text-sm font-medium text-slate-600">
+              <span className="flex items-center"><ScanText className="w-4 h-4 mr-2" />1. Scan</span>
+              <span className="flex items-center"><Sparkles className="w-4 h-4 mr-2" />2. Extract</span>
+              <span className="flex items-center"><FileCheck2 className="w-4 h-4 mr-2" />3. Review</span>
+            </div>
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+              title="API Key Einstellungen"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
           </div>
         </div>
       </header>
