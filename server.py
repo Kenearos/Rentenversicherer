@@ -332,6 +332,8 @@ def get_field_mapping(template_name):
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    # Use FLASK_PORT to avoid conflict with Railway's PORT variable
+    # which is used by the frontend static file server
+    port = int(os.environ.get('FLASK_PORT', 5000))
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     app.run(host='0.0.0.0', port=port, debug=debug)

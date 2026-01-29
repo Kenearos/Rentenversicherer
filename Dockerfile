@@ -59,7 +59,10 @@ serve dist -l ${PORT:-3000}\n\
 EXPOSE 3000 5000
 
 # Environment variables
+# PORT is used by serve for the frontend (Railway will set this)
 ENV PORT=3000
+# FLASK_PORT is used by the Python API server (separate from Railway's PORT)
+ENV FLASK_PORT=5000
 ENV FLASK_DEBUG=false
 ENV VITE_LATEX_API_URL=http://localhost:5000
 
