@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ExtractedField, FileData } from '../types';
-import { Check, Edit2, Download, RefreshCw, FileText, AlertTriangle, XCircle, ArrowRight, PenTool, CheckCircle2, Circle } from 'lucide-react';
+import { Check, Edit2, Download, RefreshCw, FileText, AlertTriangle, XCircle, ArrowRight, PenTool, CheckCircle2, Circle, FileCode, Loader2 } from 'lucide-react';
 import { createFilledPdf } from '../services/pdfService';
+import { generateLatexPdf, isLatexServiceAvailable, detectTemplate, base64ToBlob } from '../services/latexService';
 import { jsPDF } from "jspdf";
 
 interface ReviewPanelProps {
@@ -13,18 +14,40 @@ interface ReviewPanelProps {
   onReset: () => void;
 }
 
-export const ReviewPanel: React.FC<ReviewPanelProps> = ({ 
-  fields: initialFields, 
-  formFile, 
+type PdfMode = 'overlay' | 'fillable' | 'latex';
+
+export const ReviewPanel: React.FC<ReviewPanelProps> = ({
+  fields: initialFields,
+  formFile,
   sourceFile,
   summary,
   isFillablePdf,
-  onReset 
+  onReset
 }) => {
   const [fields, setFields] = useState(initialFields);
   const [activeField, setActiveField] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [filterMode, setFilterMode] = useState<'ALL' | 'ATTENTION'>('ALL');
+  const [latexAvailable, setLatexAvailable] = useState<boolean | null>(null);
+  const [pdfMode, setPdfMode] = useState<PdfMode>(isFillablePdf ? 'fillable' : 'overlay');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [latexPdfBase64, setLatexPdfBase64] = useState<string | null>(null);
+
+  // Detect template from form file name
+  const detectedTemplate = useMemo(() => detectTemplate(formFile.file.name), [formFile.file.name]);
+
+  // Check LaTeX service availability on mount
+  useEffect(() => {
+    const checkLatex = async () => {
+      const available = await isLatexServiceAvailable();
+      setLatexAvailable(available);
+      // Auto-switch to LaTeX mode if available and template detected
+      if (available && detectedTemplate && !isFillablePdf) {
+        setPdfMode('latex');
+      }
+    };
+    checkLatex();
+  }, [detectedTemplate, isFillablePdf]);
 
   // Derived state for progress
   const verifiedCount = fields.filter(f => f.isVerified).length;
@@ -35,12 +58,46 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     fields.filter(f => f.validation?.status !== 'VALID'), 
   [fields]);
 
+  // Generate LaTeX PDF
+  const generateLatexPreview = useCallback(async () => {
+    if (!detectedTemplate || pdfMode !== 'latex') return;
+
+    setIsGenerating(true);
+    try {
+      const result = await generateLatexPdf(detectedTemplate, fields);
+      if (result.success && result.pdf) {
+        setLatexPdfBase64(result.pdf);
+        const blob = base64ToBlob(result.pdf);
+        const url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+      } else {
+        console.error('LaTeX generation failed:', result.error);
+        // Fallback to overlay mode
+        setPdfMode('overlay');
+      }
+    } catch (e) {
+      console.error('LaTeX generation error:', e);
+      setPdfMode('overlay');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [detectedTemplate, fields, pdfMode]);
+
   // Generate preview
   useEffect(() => {
     const updatePreview = async () => {
+      // LaTeX mode - handled separately with button click
+      if (pdfMode === 'latex') {
+        // Only auto-generate if we don't have a preview yet
+        if (!latexPdfBase64) {
+          generateLatexPreview();
+        }
+        return;
+      }
+
       if (formFile.type === 'application/pdf') {
         try {
-          const filledPdfBytes = await createFilledPdf(formFile.base64, fields, isFillablePdf);
+          const filledPdfBytes = await createFilledPdf(formFile.base64, fields, pdfMode === 'fillable');
           const blob = new Blob([filledPdfBytes], { type: 'application/pdf' });
           const url = URL.createObjectURL(blob);
           setPreviewUrl(url);
@@ -52,11 +109,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         setPreviewUrl(formFile.previewUrl);
       }
     };
-    
+
     // Debounce slightly to avoid rapid updates on typing
     const timer = setTimeout(updatePreview, 600);
     return () => clearTimeout(timer);
-  }, [fields, isFillablePdf, formFile.base64, formFile.type]);
+  }, [fields, pdfMode, formFile.base64, formFile.type, latexPdfBase64, generateLatexPreview]);
 
   const handleUpdate = (index: number, newValue: string) => {
     const newFields = [...fields];
@@ -87,6 +144,30 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   };
 
   const handleDownload = async () => {
+    // LaTeX mode - regenerate fresh PDF for download
+    if (pdfMode === 'latex' && detectedTemplate) {
+      setIsGenerating(true);
+      try {
+        const result = await generateLatexPdf(detectedTemplate, fields);
+        if (result.success && result.pdf) {
+          const blob = base64ToBlob(result.pdf);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${detectedTemplate}_filled.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } else {
+          alert(`PDF generation failed: ${result.error}`);
+        }
+      } finally {
+        setIsGenerating(false);
+      }
+      return;
+    }
+
     if (formFile.type === 'application/pdf' && previewUrl) {
       const a = document.createElement('a');
       a.href = previewUrl;
@@ -104,6 +185,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
        });
        doc.save("data_report.pdf");
     }
+  };
+
+  // Regenerate LaTeX preview
+  const handleRegenerateLatex = () => {
+    setLatexPdfBase64(null);
+    generateLatexPreview();
   };
 
   // Sort: Unverified/Issues first, then verified
@@ -154,11 +241,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             Start Over
           </button>
           
-          <button 
+          <button
             onClick={handleDownload}
-            className={`flex items-center px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors shadow-sm bg-indigo-600 hover:bg-indigo-700`}
+            disabled={isGenerating}
+            className={`flex items-center px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors shadow-sm ${isGenerating ? 'bg-indigo-400 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700'}`}
           >
-            <Download className="w-4 h-4 mr-2" />
+            {isGenerating ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4 mr-2" />
+            )}
             Download PDF
           </button>
         </div>
@@ -170,29 +262,73 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
              <div className="flex items-center space-x-2">
                <span className="text-xs font-medium text-slate-300 uppercase tracking-wider">Preview</span>
-               {!isFillablePdf && (
+               {pdfMode === 'latex' && (
+                 <span className="flex items-center text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                   <FileCode className="w-3 h-3 mr-1" />
+                   LaTeX Template Mode
+                 </span>
+               )}
+               {pdfMode === 'overlay' && (
                  <span className="flex items-center text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/30">
                    <PenTool className="w-3 h-3 mr-1" />
                    Visual Overlay Mode
                  </span>
                )}
+               {pdfMode === 'fillable' && (
+                 <span className="flex items-center text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30">
+                   <FileText className="w-3 h-3 mr-1" />
+                   Fillable PDF Mode
+                 </span>
+               )}
              </div>
-             <span className="text-xs text-slate-400">{formFile.file.name}</span>
+             <div className="flex items-center space-x-2">
+               {/* Mode Switcher */}
+               {latexAvailable && detectedTemplate && (
+                 <button
+                   onClick={() => {
+                     const newMode = pdfMode === 'latex' ? 'overlay' : 'latex';
+                     setPdfMode(newMode);
+                     if (newMode === 'latex') {
+                       setLatexPdfBase64(null);
+                     }
+                   }}
+                   className="text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition-colors"
+                 >
+                   {pdfMode === 'latex' ? 'Use Overlay' : 'Use LaTeX'}
+                 </button>
+               )}
+               {pdfMode === 'latex' && (
+                 <button
+                   onClick={handleRegenerateLatex}
+                   disabled={isGenerating}
+                   className="text-[10px] bg-emerald-700 hover:bg-emerald-600 text-emerald-100 px-2 py-1 rounded transition-colors disabled:opacity-50"
+                 >
+                   {isGenerating ? 'Generating...' : 'Regenerate'}
+                 </button>
+               )}
+               <span className="text-xs text-slate-400">{formFile.file.name}</span>
+             </div>
           </div>
           <div className="flex-1 bg-slate-900 relative">
-             {previewUrl ? (
-                formFile.type === 'application/pdf' ? (
-                  <iframe 
-                    src={previewUrl} 
+             {isGenerating && pdfMode === 'latex' ? (
+                <div className="flex flex-col items-center justify-center h-full text-emerald-400">
+                  <Loader2 className="w-16 h-16 mb-4 animate-spin" />
+                  <p className="font-medium">Generating LaTeX PDF...</p>
+                  <p className="text-sm text-slate-500 mt-1">Compiling template with your data</p>
+                </div>
+             ) : previewUrl ? (
+                formFile.type === 'application/pdf' || pdfMode === 'latex' ? (
+                  <iframe
+                    src={previewUrl}
                     title="Form PDF Preview"
                     className="w-full h-full border-none"
                   />
                 ) : (
                   <div className="w-full h-full overflow-auto flex items-center justify-center p-4">
-                    <img 
-                      src={previewUrl} 
-                      alt="Form Document" 
-                      className="max-w-full shadow-lg border border-slate-700" 
+                    <img
+                      src={previewUrl}
+                      alt="Form Document"
+                      className="max-w-full shadow-lg border border-slate-700"
                     />
                   </div>
                 )
@@ -230,12 +366,24 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               </div>
             </div>
             
-             {!isFillablePdf && (
+             {pdfMode === 'latex' && detectedTemplate && (
+                <div className="flex items-start space-x-2 bg-emerald-50 text-emerald-800 p-3 rounded-md border border-emerald-100 text-xs">
+                   <FileCode className="w-4 h-4 flex-shrink-0 text-emerald-600 mt-0.5" />
+                   <div>
+                     <p className="font-semibold">LaTeX Template Mode: {detectedTemplate}</p>
+                     <p>Using precise LaTeX template. All fields will be positioned correctly in the generated PDF.</p>
+                   </div>
+                </div>
+             )}
+             {pdfMode === 'overlay' && (
                 <div className="flex items-start space-x-2 bg-indigo-50 text-indigo-800 p-3 rounded-md border border-indigo-100 text-xs">
                    <PenTool className="w-4 h-4 flex-shrink-0 text-indigo-600 mt-0.5" />
                    <div>
                      <p className="font-semibold">Visual Overlay Mode</p>
                      <p>AI is visually estimating field positions. Please verify text alignment in the preview.</p>
+                     {latexAvailable && detectedTemplate && (
+                       <p className="mt-1 text-emerald-700 font-medium">Tip: LaTeX template available! Click "Use LaTeX" for better results.</p>
+                     )}
                    </div>
                 </div>
              )}
