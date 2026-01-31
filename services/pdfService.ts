@@ -100,5 +100,36 @@ export const createFilledPdf = async (base64: string, fields: ExtractedField[], 
 };
 
 export const fillPdf = async (base64: string, fieldValues: Record<string, string | boolean>): Promise<Uint8Array> => {
-  return new Uint8Array();
+  const pdfDoc = await PDFDocument.load(base64);
+
+  try {
+    const form = pdfDoc.getForm();
+
+    for (const [fieldName, value] of Object.entries(fieldValues)) {
+      try {
+        const field = form.getField(fieldName);
+        if (!field) continue;
+
+        if (field instanceof PDFTextField) {
+          field.setText(String(value));
+        } else if (field instanceof PDFCheckBox) {
+          const isChecked = typeof value === 'boolean'
+            ? value
+            : String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'yes';
+          if (isChecked) {
+            field.check();
+          } else {
+            field.uncheck();
+          }
+        }
+      } catch (e) {
+        // Field might be read-only or have other issues - continue with other fields
+        console.warn(`Could not fill field "${fieldName}":`, e);
+      }
+    }
+  } catch (e) {
+    console.warn("Error filling form fields:", e);
+  }
+
+  return await pdfDoc.save();
 };
