@@ -2,17 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FileData, FormResponse } from '../../types';
 import { PdfFieldInfo } from '../../services/pdfService';
 
-// Create a mock function that can be referenced in the mock
+// Mock the apiKeyService module - MUST be before geminiService import
+vi.mock('../../services/apiKeyService', () => ({
+  getApiKey: vi.fn(() => 'AItest123'),
+  setApiKey: vi.fn(),
+  hasApiKey: vi.fn(() => true),
+  clearApiKey: vi.fn(),
+}));
+
+// Create mock function in module scope that will be hoisted properly
 const mockGenerateContent = vi.fn();
 
-// Mock the @google/genai module
-vi.mock('@google/genai', async () => {
+// Mock the @google/genai module using factory that references mockGenerateContent
+vi.mock('@google/genai', () => {
   return {
-    GoogleGenAI: vi.fn().mockImplementation(() => ({
-      models: {
+    GoogleGenAI: class MockGoogleGenAI {
+      models = {
         generateContent: mockGenerateContent
-      }
-    })),
+      };
+    },
     Type: {
       OBJECT: 'OBJECT',
       STRING: 'STRING',
@@ -24,7 +32,7 @@ vi.mock('@google/genai', async () => {
 });
 
 // Import after mocking
-const { processDocuments } = await import('../../services/geminiService');
+import { processDocuments } from '../../services/geminiService';
 
 describe('geminiService', () => {
   const mockBlankForm: FileData = {
