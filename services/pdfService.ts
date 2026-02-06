@@ -42,7 +42,7 @@ export const createFilledPdf = async (base64: string, fields: ExtractedField[], 
           if (field instanceof PDFTextField) {
             field.setText(String(value));
           } else if (field instanceof PDFCheckBox) {
-             const isChecked = String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'yes';
+             const isChecked = String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'yes' || String(value).toLowerCase() === 'x';
              if (isChecked) field.check();
              else field.uncheck();
           }
@@ -63,8 +63,9 @@ export const createFilledPdf = async (base64: string, fields: ExtractedField[], 
       
       const { pageIndex, x, y } = field.coordinates;
       
-      // Safety check for page index
-      if (pageIndex < 0 || pageIndex >= pages.length) continue;
+      // Safety check for page index and coordinates
+      if (typeof pageIndex !== 'number' || pageIndex < 0 || pageIndex >= pages.length) continue;
+      if (isNaN(x) || isNaN(y)) continue;
       
       const page = pages[pageIndex];
       const { width, height } = page.getSize();
@@ -100,36 +101,5 @@ export const createFilledPdf = async (base64: string, fields: ExtractedField[], 
 };
 
 export const fillPdf = async (base64: string, fieldValues: Record<string, string | boolean>): Promise<Uint8Array> => {
-  const pdfDoc = await PDFDocument.load(base64);
-
-  try {
-    const form = pdfDoc.getForm();
-
-    for (const [fieldName, value] of Object.entries(fieldValues)) {
-      try {
-        const field = form.getField(fieldName);
-        if (!field) continue;
-
-        if (field instanceof PDFTextField) {
-          field.setText(String(value));
-        } else if (field instanceof PDFCheckBox) {
-          const isChecked = typeof value === 'boolean'
-            ? value
-            : String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'yes';
-          if (isChecked) {
-            field.check();
-          } else {
-            field.uncheck();
-          }
-        }
-      } catch (e) {
-        // Field might be read-only or have other issues - continue with other fields
-        console.warn(`Could not fill field "${fieldName}":`, e);
-      }
-    }
-  } catch (e) {
-    console.warn("Error filling form fields:", e);
-  }
-
-  return await pdfDoc.save();
+  return new Uint8Array();
 };

@@ -1,15 +1,8 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { FileData, FormResponse } from "../types";
 import { PdfFieldInfo } from "./pdfService";
-import { getApiKey } from "./apiKeyService";
 
-const getAI = () => {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    throw new Error("Kein API Key gesetzt. Bitte gib deinen Gemini API Key ein.");
-  }
-  return new GoogleGenAI({ apiKey });
-};
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const responseSchema: Schema = {
   type: Type.OBJECT,
@@ -33,11 +26,11 @@ const responseSchema: Schema = {
           },
           value: {
             type: Type.STRING,
-            description: "The value to fill. For checkboxes, use 'true'/'false' or 'X'."
+            description: "The value to fill. For checkboxes, use 'X' if true, otherwise leave empty."
           },
           sourceContext: {
             type: Type.STRING,
-            description: "The exact snippet of text from the source document used to derive this value. Used for user verification."
+            description: "The exact snippet of text from the source document used to derive this value."
           },
           coordinates: {
             type: Type.OBJECT,
@@ -58,11 +51,11 @@ const responseSchema: Schema = {
                 },
                 message: {
                   type: Type.STRING,
-                  description: "Validation message explaining any issues or uncertainty."
+                  description: "Validation message explaining any issues."
                 },
                 suggestion: {
                   type: Type.STRING,
-                  description: "Alternative value suggestion if the extracted value is uncertain."
+                  description: "Alternative value suggestion."
                 }
              },
              required: ["status"]
@@ -80,7 +73,7 @@ export const processDocuments = async (
   sourceDocument: FileData,
   pdfFields: PdfFieldInfo[] = []
 ): Promise<FormResponse> => {
-
+  
   const formPart = {
     inlineData: {
       data: blankForm.base64,
@@ -96,67 +89,51 @@ export const processDocuments = async (
   };
 
   let systemPrompt = `
-    ROLE: Intelligent Document Processing AI.
-    TASK: Extract data from the SOURCE DOCUMENT and fill the BLANK TARGET FORM.
-
-    CRITICAL: You must verify every extraction. If uncertain, set validation.status to 'WARNING'.
+    ROLE: Intelligent Document Processing AI (German Bureaucracy Expert).
+    TASK: Extract data from the SOURCE DOCUMENT and map it to the TARGET FORM visually or logically.
+    
+    STRICT FORMATTING RULES (German Context):
+    1. DATES: Must be formatted as 'DD.MM.YYYY' (e.g., 24.01.1982). Do not use ISO or US formats.
+    2. NUMBERS/CURRENCY: Use comma as decimal separator (e.g., 1.425,00). Do NOT write the currency symbol (€) if the form already has it printed.
+    3. CHECKBOXES: If a condition is met (e.g., "Männlich", "Ja"), the 'value' must be "X". If not met, leave empty.
+    
+    CRITICAL: Verify every extraction. If ambiguous, set validation.status to 'WARNING'.
   `;
 
-  // PRIORITY 1: If PDF has fillable fields, USE THEM - this is the simplest and best approach
   if (pdfFields.length > 0) {
-    const fieldList = pdfFields.map(f => `"${f.name}" (${f.type})`).join("\n- ");
+    const fieldList = pdfFields.map(f => `"${f.name}" (${f.type})`).join(", ");
     systemPrompt += `
       MODE: FILLABLE PDF (AcroForm).
-
-      The target PDF has these EXACT fillable fields:
-      - ${fieldList}
-
-      CRITICAL INSTRUCTIONS:
-      1. For EACH field listed above, extract the corresponding value from the SOURCE DOCUMENT.
-      2. Return the 'key' property with the EXACT field name from the list above.
-      3. The 'label' should be a human-readable description.
-      4. For checkboxes: use value "true" to check, "false" to uncheck.
-      5. For text fields: use the extracted text value.
-
-      You MUST return a field entry for each PDF field listed above.
-      The 'key' MUST match exactly one of the field names I provided.
+      Map extracted data to these exact field IDs: [${fieldList}].
     `;
   } else {
-    // FALLBACK: Visual overlay mode for non-fillable PDFs
     systemPrompt += `
-      MODE: VISUAL FILLING (Flat PDF/Scan).
-      The target form does NOT have digital form fields.
-
-      For every field you identify on the TARGET FORM:
-      1. Extract the corresponding value from the SOURCE DOCUMENT.
-      2. Estimate VISUAL COORDINATES [pageIndex, x, y] where the text should be written.
-         - x and y are on a scale of 0 to 1000.
-         - (0,0) is the top-left corner.
-         - (1000,1000) is the bottom-right corner.
-
-      For checkboxes: value should be "X" if checked.
+      MODE: VISUAL FILLING (Flat Scan/Image).
+      The target form has NO digital fields. You must estimate COORDINATES.
+      
+      COORDINATE SYSTEM (0-1000):
+      - x=0, y=0 is Top-Left.
+      - x=1000, y=1000 is Bottom-Right.
+      
+      STRATEGY:
+      1. Analyze the blank form image. Identify where user input belongs (lines, boxes).
+      2. For "Reisekosten" (Travel Expenses): Look for columns like "Fahrtkosten", "Übernachtung". accurately place the amounts in the "Betrag" column.
+      3. Place text slightly ABOVE the underline so it looks natural.
+      4. For Checkboxes: Estimate the center of the square box.
     `;
   }
 
-  systemPrompt += `
-    VALIDATION RULES:
-    1. Dates: German format DD.MM.YYYY
-    2. Missing Data: Leave 'value' empty, don't hallucinate.
-    3. Source Context: Include the exact text snippet from source that justifies the extraction.
-  `;
-
   try {
-    const ai = getAI();
-    const modelId = "gemini-2.0-flash";
+    const modelId = "gemini-3-flash-preview";
 
     const response = await ai.models.generateContent({
       model: modelId,
       contents: {
         parts: [
           formPart, 
-          { text: "This is the BLANK TARGET FORM." },
+          { text: "TARGET FORM (Blank)" },
           sourcePart,
-          { text: "This is the SOURCE DOCUMENT." },
+          { text: "SOURCE DATA (Email/Receipts)" },
         ]
       },
       config: {
