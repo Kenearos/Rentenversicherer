@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ExtractedField, FileData } from '../types';
-import { Check, Edit2, Download, RefreshCw, FileText, AlertTriangle, XCircle, ArrowRight, PenTool, CheckCircle2, Circle, LayoutTemplate, List, Move } from 'lucide-react';
+import { Check, Edit2, Download, RefreshCw, FileText, AlertTriangle, XCircle, ArrowRight, PenTool, CheckCircle2, Circle, LayoutTemplate, List, Move, ExternalLink } from 'lucide-react';
 import { createFilledPdf } from '../services/pdfService';
 import { jsPDF } from "jspdf";
 
@@ -43,9 +43,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Generate preview for PDF download
   useEffect(() => {
     let active = true;
-    let timeoutId: ReturnType<typeof setTimeout>;
+    let timeoutId: any;
 
     const generatePreview = async () => {
+      // If it's a PDF, we try to show the filled version
       if (formFile.type === 'application/pdf') {
         try {
           const filledPdfBytes = await createFilledPdf(formFile.base64, fields, isFillablePdf);
@@ -60,14 +61,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           });
         } catch (e) {
           console.error("Failed to generate PDF preview", e);
+          // Fallback to original if generation fails
+          setPreviewUrl(formFile.previewUrl);
         }
       } else {
+        // For images, just show the original
         setPreviewUrl(formFile.previewUrl);
       }
     };
 
-    // Debounce to avoid excessive PDF generation
-    timeoutId = setTimeout(generatePreview, 600);
+    // Debounce to avoid excessive PDF generation while typing
+    timeoutId = setTimeout(generatePreview, 1000);
 
     return () => {
       active = false;
@@ -79,7 +83,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   useEffect(() => {
     return () => {
       setPreviewUrl(prev => {
-        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+        if (prev && prev.startsWith('blob:') && prev !== formFile.previewUrl) {
+           URL.revokeObjectURL(prev);
+        }
         return null;
       });
     };
@@ -261,24 +267,32 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           <div className="bg-slate-900 rounded-xl overflow-hidden shadow-lg flex flex-col">
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
                <div className="flex items-center space-x-2">
-                 <span className="text-xs font-medium text-slate-300 uppercase tracking-wider">PDF Preview</span>
+                 <span className="text-xs font-medium text-slate-300 uppercase tracking-wider">PDF Preview (Live)</span>
                </div>
                <span className="text-xs text-slate-400">{formFile.file.name}</span>
             </div>
             <div className="flex-1 bg-slate-900 relative">
                {previewUrl ? (
                   formFile.type === 'application/pdf' ? (
-                    <object 
-                      data={previewUrl}
-                      type="application/pdf"
-                      className="w-full h-full block"
-                      aria-label="PDF Preview"
-                    >
-                        <div className="flex flex-col items-center justify-center h-full text-white/70">
-                            <p>Unable to display PDF directly.</p>
-                            <a href={previewUrl} download className="text-indigo-400 underline mt-2">Download to view</a>
+                    <>
+                        <iframe 
+                          src={previewUrl} 
+                          title="Form PDF Preview"
+                          className="w-full h-full border-none"
+                        />
+                        {/* Fallback open button */}
+                        <div className="absolute bottom-4 right-4 opacity-50 hover:opacity-100 transition-opacity">
+                            <a 
+                                href={previewUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="flex items-center bg-black/70 text-white text-xs px-3 py-1.5 rounded-full hover:bg-black"
+                            >
+                                <ExternalLink className="w-3 h-3 mr-1" />
+                                Open in new tab
+                            </a>
                         </div>
-                    </object>
+                    </>
                   ) : (
                     <div className="w-full h-full overflow-auto flex items-center justify-center p-4">
                       <img 
@@ -291,7 +305,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                ) : (
                   <div className="flex flex-col items-center justify-center h-full text-slate-500">
                     <FileText className="w-16 h-16 mb-4 opacity-50" />
-                    <p>Preview not available</p>
+                    <p>Generating preview...</p>
                   </div>
                )}
             </div>
@@ -402,10 +416,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             
             <div 
               ref={containerRef}
-              className="relative bg-white shadow-2xl transition-cursor" 
+              className="relative inline-block shadow-2xl transition-cursor bg-white" 
               style={{ 
-                width: '794px', 
-                minHeight: '1123px',
                 cursor: draggingField !== null ? 'grabbing' : 'default'
               }}
               onMouseMove={handleMouseMove}
@@ -413,16 +425,32 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               onMouseLeave={handleMouseUp}
             > 
                 {/* Background Image/PDF */}
-                {formFile.previewUrl && (
+                {formFile.type === 'application/pdf' ? (
+                    <div className="flex flex-col items-center justify-center p-20 bg-slate-50 border border-slate-200 text-center" style={{ width: '794px', height: '1123px' }}>
+                         <FileText className="w-20 h-20 text-slate-300 mb-4" />
+                         <h3 className="text-xl font-bold text-slate-800">Visual Editing Unavailable for PDF</h3>
+                         <p className="text-slate-500 max-w-sm mt-2">
+                            The visual drag-and-drop editor works best with Image uploads. 
+                            For this PDF, please use the List View to verify data or Download to see the final result.
+                         </p>
+                         <button 
+                          onClick={() => setViewMode('LIST')}
+                          className="mt-6 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                        >
+                          Switch to List View
+                        </button>
+                    </div>
+                ) : (
                   <img 
-                    src={formFile.previewUrl} 
-                    className="absolute inset-0 w-full h-full object-contain pointer-events-none opacity-90 select-none"
+                    src={formFile.previewUrl!} 
+                    className="block max-w-full h-auto pointer-events-none opacity-90 select-none"
+                    style={{ maxHeight: '1200px' }}
                     alt="Form Background"
                   />
                 )}
                 
                 {/* Fallback info if not visual mode compatible */}
-                {!fields.some(f => f.coordinates) && (
+                {!fields.some(f => f.coordinates) && formFile.type !== 'application/pdf' && (
                    <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20 backdrop-blur-sm">
                       <div className="text-center p-6 max-w-md">
                         <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
@@ -440,8 +468,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                    </div>
                 )}
 
-                {/* Overlay Inputs */}
-                {fields.map((field, idx) => {
+                {/* Overlay Inputs (Only show if not PDF, or if we force it but it's blank bg) */}
+                {formFile.type !== 'application/pdf' && fields.map((field, idx) => {
                   if (!field.coordinates) return null;
                   
                   // Coordinate conversion (0-1000 scale to percentage)

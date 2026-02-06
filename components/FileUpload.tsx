@@ -21,6 +21,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   const [isDragging, setIsDragging] = useState(false);
 
   const processFile = (file: File) => {
+    // Create a robust Blob URL for previewing (works better than Base64 for PDFs)
+    const objectUrl = URL.createObjectURL(file);
+
     const reader = new FileReader();
     reader.onload = () => {
       const base64String = reader.result as string;
@@ -29,7 +32,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       
       onFileSelect({
         file,
-        previewUrl: file.type.startsWith('image/') ? base64String : null,
+        previewUrl: objectUrl,
         base64: base64Content,
         type: file.type as any
       });
@@ -92,10 +95,10 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       ) : (
         <div className="relative border border-indigo-100 bg-indigo-50/50 rounded-xl p-4 flex items-center space-x-4">
           <div className="w-12 h-12 bg-white rounded-lg shadow-sm flex items-center justify-center flex-shrink-0 overflow-hidden">
-            {selectedFile.previewUrl ? (
-              <img src={selectedFile.previewUrl} alt="Preview" className="w-full h-full object-cover" />
-            ) : (
+            {selectedFile.type === 'application/pdf' ? (
               <FileText className="w-6 h-6 text-indigo-600" />
+            ) : (
+              <img src={selectedFile.previewUrl!} alt="Preview" className="w-full h-full object-cover" />
             )}
           </div>
           <div className="flex-1 min-w-0">

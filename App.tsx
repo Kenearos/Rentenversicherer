@@ -44,6 +44,14 @@ const App: React.FC = () => {
   };
 
   const reset = () => {
+    // Cleanup blob URLs to prevent memory leaks
+    if (formFile?.previewUrl && formFile.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(formFile.previewUrl);
+    }
+    if (sourceFile?.previewUrl && sourceFile.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(sourceFile.previewUrl);
+    }
+
     setStatus(AppStatus.IDLE);
     setFormFile(null);
     setSourceFile(null);
