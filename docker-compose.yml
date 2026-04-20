@@ -1,0 +1,29 @@
+services:
+  rentenv:
+    build:
+      context: ..
+      dockerfile: Rentenversicherer/Dockerfile
+    image: rentenv:latest
+    container_name: rentenv
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3011
+      # Claude-CLI liest HOME um .claude zu finden. node-User hat /home/node.
+      HOME: /home/node
+    volumes:
+      # Claude-Credentials vom Host (User openclaw, UID 1000).
+      # Read-write weil Claude Session-State rein schreibt.
+      - /home/openclaw/.claude:/home/node/.claude
+      - /home/openclaw/.config/claude:/home/node/.config/claude
+    networks:
+      - matrix
+    expose:
+      - "3011"
+
+networks:
+  matrix:
+    external: true
+    name: matrix_default

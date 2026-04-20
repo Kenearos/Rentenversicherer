@@ -86,3 +86,10 @@ Thumbs.db
 # Dist folder
 dist/
 dist-ssr/
+
+# Server temp uploads (falls lokal ausgelagert)
+/tmp/
+/uploads/
+
+# Test-Fixtures (nicht committen — enthalten ggf. echte Formulare)
+/test-fixtures/

@@ -1,0 +1,12 @@
+@import '../kanagawa-design-system/css/kanagawa.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background-color: var(--kng-bg);
+  color: var(--kng-text);
+  font-family: var(--kng-font-sans);
+}

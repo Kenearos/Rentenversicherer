@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Upload, FileText, CheckCircle, X, Image as ImageIcon } from 'lucide-react';
-import { FileData } from '../types';
+import { Upload, FileText, CheckCircle, X } from 'lucide-react';
+import type { FileData } from '../types';
 
 interface FileUploadProps {
   label: string;
@@ -15,26 +15,22 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   description,
   accept,
   onFileSelect,
-  selectedFile
+  selectedFile,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   const processFile = (file: File) => {
-    // Create a robust Blob URL for previewing (works better than Base64 for PDFs)
     const objectUrl = URL.createObjectURL(file);
-
     const reader = new FileReader();
     reader.onload = () => {
       const base64String = reader.result as string;
-      // Remove data URL prefix for API usage
       const base64Content = base64String.split(',')[1];
-      
       onFileSelect({
         file,
         previewUrl: objectUrl,
         base64: base64Content,
-        type: file.type as any
+        type: file.type as FileData['type'],
       });
     };
     reader.readAsDataURL(file);
@@ -62,18 +58,24 @@ export const FileUpload: React.FC<FileUploadProps> = ({
 
   return (
     <div className="w-full">
-      <label className="block text-sm font-medium text-slate-700 mb-2">{label}</label>
-      
+      <label className="block text-sm font-medium text-kng-text-secondary mb-2">
+        {label}
+      </label>
+
       {!selectedFile ? (
         <div
           onClick={() => inputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          className={`
-            relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200
-            ${isDragging ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300 hover:border-slate-400 hover:bg-slate-50'}
-          `}
+          className={`relative border-2 border-dashed rounded-kng-lg p-8 text-center cursor-pointer transition-all duration-200 ${
+            isDragging
+              ? 'border-kng-accent bg-kng-surface'
+              : 'border-kng-border hover:border-kng-accent hover:bg-kng-surface'
+          }`}
         >
           <input
             type="file"
@@ -83,37 +85,43 @@ export const FileUpload: React.FC<FileUploadProps> = ({
             onChange={handleChange}
           />
           <div className="flex flex-col items-center justify-center space-y-3">
-            <div className="p-3 bg-white rounded-full shadow-sm">
-              <Upload className="w-6 h-6 text-indigo-600" />
+            <div className="p-3 bg-kng-bg-elevated rounded-kng-full shadow-kng-sm">
+              <Upload className="w-6 h-6 text-kng-accent" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-900">Click to upload or drag and drop</p>
-              <p className="text-xs text-slate-500 mt-1">{description}</p>
+              <p className="text-sm font-semibold text-kng-text">
+                Klick oder Drag & Drop
+              </p>
+              <p className="text-xs text-kng-text-muted mt-1">{description}</p>
             </div>
           </div>
         </div>
       ) : (
-        <div className="relative border border-indigo-100 bg-indigo-50/50 rounded-xl p-4 flex items-center space-x-4">
-          <div className="w-12 h-12 bg-white rounded-lg shadow-sm flex items-center justify-center flex-shrink-0 overflow-hidden">
+        <div className="relative border border-kng-border bg-kng-surface rounded-kng-lg p-4 flex items-center space-x-4">
+          <div className="w-12 h-12 bg-kng-bg-elevated rounded-kng-md shadow-kng-sm flex items-center justify-center flex-shrink-0 overflow-hidden">
             {selectedFile.type === 'application/pdf' ? (
-              <FileText className="w-6 h-6 text-indigo-600" />
+              <FileText className="w-6 h-6 text-kng-accent" />
             ) : (
-              <img src={selectedFile.previewUrl!} alt="Preview" className="w-full h-full object-cover" />
+              <img
+                src={selectedFile.previewUrl!}
+                alt="Preview"
+                className="w-full h-full object-cover"
+              />
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-slate-900 truncate">
+            <p className="text-sm font-medium text-kng-text truncate">
               {selectedFile.file.name}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-kng-text-muted">
               {(selectedFile.file.size / 1024 / 1024).toFixed(2)} MB
             </p>
           </div>
           <div className="flex items-center space-x-2">
-            <CheckCircle className="w-5 h-5 text-emerald-500" />
-            <button 
+            <CheckCircle className="w-5 h-5 text-kng-success" />
+            <button
               onClick={clearFile}
-              className="p-1 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500"
+              className="p-1 hover:bg-kng-surface-hover rounded-kng-full transition-colors text-kng-text-muted hover:text-kng-error"
             >
               <X className="w-5 h-5" />
             </button>

@@ -1,552 +1,354 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ExtractedField, FileData } from '../types';
-import { Check, Edit2, Download, RefreshCw, FileText, AlertTriangle, XCircle, ArrowRight, PenTool, CheckCircle2, Circle, LayoutTemplate, List, Move, ExternalLink } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { ExtractedField, FileData } from '../types';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  Download,
+  ExternalLink,
+  FileText,
+  RefreshCw,
+  XCircle,
+} from 'lucide-react';
 import { createFilledPdf } from '../services/pdfService';
-import { jsPDF } from "jspdf";
 
 interface ReviewPanelProps {
   fields: ExtractedField[];
   formFile: FileData;
-  sourceFile: FileData;
   summary: string;
-  isFillablePdf: boolean;
   onReset: () => void;
 }
 
-export const ReviewPanel: React.FC<ReviewPanelProps> = ({ 
-  fields: initialFields, 
-  formFile, 
-  sourceFile,
+type FilterMode = 'ALL' | 'ATTENTION';
+
+export const ReviewPanel: React.FC<ReviewPanelProps> = ({
+  fields: initialFields,
+  formFile,
   summary,
-  isFillablePdf,
-  onReset 
+  onReset,
 }) => {
-  const [fields, setFields] = useState(initialFields);
+  const [fields, setFields] = useState<ExtractedField[]>(initialFields);
   const [activeField, setActiveField] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [filterMode, setFilterMode] = useState<'ALL' | 'ATTENTION'>('ALL');
-  const [viewMode, setViewMode] = useState<'LIST' | 'FORM'>('LIST');
+  const [filterMode, setFilterMode] = useState<FilterMode>('ALL');
 
-  // Dragging state
-  const [draggingField, setDraggingField] = useState<number | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Derived state for progress
-  const verifiedCount = fields.filter(f => f.isVerified).length;
+  const verifiedCount = fields.filter((f) => f.isVerified).length;
   const totalCount = fields.length;
-  const progressPercent = Math.round((verifiedCount / totalCount) * 100);
-  
-  const fieldsRequiresAttention = useMemo(() => 
-    fields.filter(f => f.validation?.status !== 'VALID'), 
-  [fields]);
+  const progressPercent =
+    totalCount === 0 ? 0 : Math.round((verifiedCount / totalCount) * 100);
 
-  // Generate preview for PDF download
+  const fieldsRequiresAttention = useMemo(
+    () => fields.filter((f) => f.validation?.status !== 'VALID'),
+    [fields]
+  );
+
   useEffect(() => {
     let active = true;
-    let timeoutId: any;
-
-    const generatePreview = async () => {
-      // If it's a PDF, we try to show the filled version
-      if (formFile.type === 'application/pdf') {
-        try {
-          const filledPdfBytes = await createFilledPdf(formFile.base64, fields, isFillablePdf);
-          if (!active) return;
-          
-          const blob = new Blob([filledPdfBytes], { type: 'application/pdf' });
-          const url = URL.createObjectURL(blob);
-          
-          setPreviewUrl(prev => {
-            if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
-            return url;
-          });
-        } catch (e) {
-          console.error("Failed to generate PDF preview", e);
-          // Fallback to original if generation fails
-          setPreviewUrl(formFile.previewUrl);
-        }
-      } else {
-        // For images, just show the original
-        setPreviewUrl(formFile.previewUrl);
+    const handle = setTimeout(async () => {
+      try {
+        const bytes = await createFilledPdf(formFile.base64, fields);
+        if (!active) return;
+        const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        setPreviewUrl((prev) => {
+          if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+          return url;
+        });
+      } catch (e) {
+        console.error('[ReviewPanel] preview failed', e);
       }
-    };
-
-    // Debounce to avoid excessive PDF generation while typing
-    timeoutId = setTimeout(generatePreview, 1000);
+    }, 600);
 
     return () => {
       active = false;
-      clearTimeout(timeoutId);
+      clearTimeout(handle);
     };
-  }, [fields, isFillablePdf, formFile]);
+  }, [fields, formFile]);
 
-  // Cleanup blob URL on unmount
   useEffect(() => {
     return () => {
-      setPreviewUrl(prev => {
-        if (prev && prev.startsWith('blob:') && prev !== formFile.previewUrl) {
-           URL.revokeObjectURL(prev);
-        }
+      setPreviewUrl((prev) => {
+        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
         return null;
       });
     };
   }, []);
 
   const handleUpdate = (index: number, newValue: string) => {
-    const newFields = [...fields];
-    newFields[index] = { 
-      ...newFields[index], 
-      value: newValue,
-      // Auto-verify when manually edited
-      isVerified: true,
-      validation: { ...newFields[index].validation!, status: 'VALID', message: 'Manually verified' }
-    };
-    setFields(newFields);
-  };
-
-  const handleCoordinateUpdate = (index: number, x: number, y: number) => {
-    const newFields = [...fields];
-    if (newFields[index].coordinates) {
-      newFields[index] = {
-        ...newFields[index],
-        coordinates: { ...newFields[index].coordinates!, x, y },
-        isVerified: true // Moving it implies verification
+    setFields((prev) => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        value: newValue,
+        isVerified: true,
+        validation: {
+          ...(next[index].validation ?? { status: 'VALID' }),
+          status: 'VALID',
+          message: 'Manuell bestätigt',
+        },
       };
-      setFields(newFields);
-    }
+      return next;
+    });
   };
 
   const toggleVerify = (index: number) => {
-    const newFields = [...fields];
-    newFields[index] = { 
-      ...newFields[index], 
-      isVerified: !newFields[index].isVerified 
-    };
-    setFields(newFields);
+    setFields((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], isVerified: !next[index].isVerified };
+      return next;
+    });
   };
 
   const applySuggestion = (index: number) => {
-    const field = fields[index];
-    if (field.validation?.suggestion) {
-      handleUpdate(index, field.validation.suggestion);
-    }
+    const suggestion = fields[index].validation?.suggestion;
+    if (suggestion) handleUpdate(index, suggestion);
   };
 
   const handleDownload = async () => {
-    if (formFile.type === 'application/pdf' && previewUrl) {
-      const a = document.createElement('a');
-      a.href = previewUrl;
-      a.download = `filled_${formFile.file.name}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } else {
-       const doc = new jsPDF();
-       doc.text("Extracted Data", 20, 20);
-       let y = 40;
-       fields.forEach(f => {
-         doc.text(`${f.label}: ${f.value}`, 20, y);
-         y += 10;
-       });
-       doc.save("data_report.pdf");
-    }
+    const bytes = await createFilledPdf(formFile.base64, fields);
+    const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `filled_${formFile.file.name}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
-  // Drag handlers
-  const handleDragStart = (e: React.MouseEvent, index: number) => {
-    e.stopPropagation();
-    setDraggingField(index);
-    setActiveField(index);
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (draggingField !== null && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const relativeX = e.clientX - rect.left;
-      const relativeY = e.clientY - rect.top;
-
-      // Convert pixels to 0-1000 scale
-      const scaleX = (relativeX / rect.width) * 1000;
-      const scaleY = (relativeY / rect.height) * 1000;
-
-      // Clamp values
-      const clampedX = Math.max(0, Math.min(1000, scaleX));
-      const clampedY = Math.max(0, Math.min(1000, scaleY));
-
-      handleCoordinateUpdate(draggingField, clampedX, clampedY);
-    }
-  };
-
-  const handleMouseUp = () => {
-    setDraggingField(null);
-  };
-
-  // Sort: Unverified/Issues first, then verified
-  const displayedFields = fields.map((f, i) => ({ ...f, originalIndex: i }))
+  const displayedFields = fields
+    .map((f, i) => ({ ...f, originalIndex: i }))
     .sort((a, b) => {
-      // Priority 1: Attention needed
-      const aNeedsAttn = a.validation?.status !== 'VALID';
-      const bNeedsAttn = b.validation?.status !== 'VALID';
-      if (aNeedsAttn && !bNeedsAttn) return -1;
-      if (!aNeedsAttn && bNeedsAttn) return 1;
-      
-      // Priority 2: Unverified
+      const aAttn = a.validation?.status !== 'VALID';
+      const bAttn = b.validation?.status !== 'VALID';
+      if (aAttn && !bAttn) return -1;
+      if (!aAttn && bAttn) return 1;
       if (!a.isVerified && b.isVerified) return -1;
       if (a.isVerified && !b.isVerified) return 1;
-      
       return a.originalIndex - b.originalIndex;
     })
-    .filter(f => filterMode === 'ALL' || (f.validation?.status !== 'VALID' && !f.isVerified));
+    .filter(
+      (f) =>
+        filterMode === 'ALL' ||
+        (f.validation?.status !== 'VALID' && !f.isVerified)
+    );
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 h-[calc(100vh-80px)] flex flex-col">
-      {/* Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 flex-shrink-0">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Review & Verify</h2>
-          <p className="text-slate-500 text-sm mt-1">{summary}</p>
+          <h2 className="text-2xl font-bold text-kng-text">Review & Verify</h2>
+          <p className="text-kng-text-muted text-sm mt-1">{summary}</p>
         </div>
-        
+
         <div className="flex items-center gap-4 w-full md:w-auto">
-          {/* View Toggle */}
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              onClick={() => setViewMode('LIST')}
-              className={`p-1.5 rounded-md flex items-center space-x-2 text-sm font-medium transition-all ${viewMode === 'LIST' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-              title="List View"
-            >
-              <List className="w-4 h-4" />
-              <span className="hidden sm:inline">List</span>
-            </button>
-            <button
-              onClick={() => setViewMode('FORM')}
-              className={`p-1.5 rounded-md flex items-center space-x-2 text-sm font-medium transition-all ${viewMode === 'FORM' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-              title="Form Overlay View"
-            >
-              <LayoutTemplate className="w-4 h-4" />
-              <span className="hidden sm:inline">Form View</span>
-            </button>
-          </div>
-
-          <div className="h-6 w-px bg-slate-300 mx-2 hidden md:block"></div>
-
-          {/* Verification Progress */}
           <div className="hidden md:flex flex-col items-end mr-2">
-            <span className="text-xs font-semibold text-slate-600 mb-1">
-              {verifiedCount} / {totalCount} Verified
+            <span className="text-xs font-semibold text-kng-text-secondary mb-1">
+              {verifiedCount} / {totalCount} verifiziert
             </span>
-            <div className="w-32 h-2 bg-slate-200 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-emerald-500 transition-all duration-500 ease-out"
+            <div className="w-32 h-2 bg-kng-surface rounded-kng-full overflow-hidden">
+              <div
+                className="h-full bg-kng-success transition-all duration-500 ease-out"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
           </div>
 
-          <button 
+          <button
             onClick={onReset}
-            className="flex items-center px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+            className="flex items-center px-4 py-2 text-sm font-medium text-kng-text bg-kng-surface border border-kng-border rounded-kng-md hover:bg-kng-surface-hover transition-colors"
           >
             <RefreshCw className="w-4 h-4 mr-2" />
-            Start Over
+            Neu starten
           </button>
-          
-          <button 
+
+          <button
             onClick={handleDownload}
-            className={`flex items-center px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors shadow-sm bg-indigo-600 hover:bg-indigo-700`}
+            className="flex items-center px-4 py-2 text-sm font-bold text-kng-bg rounded-kng-md transition-all shadow-kng-md bg-kng-accent hover:brightness-110"
           >
             <Download className="w-4 h-4 mr-2" />
-            Download PDF
+            PDF runterladen
           </button>
         </div>
       </div>
 
-      {viewMode === 'LIST' ? (
-        /* ================= LIST VIEW ================= */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 min-h-0">
-          {/* Left Column: Preview */}
-          <div className="bg-slate-900 rounded-xl overflow-hidden shadow-lg flex flex-col">
-            <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
-               <div className="flex items-center space-x-2">
-                 <span className="text-xs font-medium text-slate-300 uppercase tracking-wider">PDF Preview (Live)</span>
-               </div>
-               <span className="text-xs text-slate-400">{formFile.file.name}</span>
-            </div>
-            <div className="flex-1 bg-slate-900 relative">
-               {previewUrl ? (
-                  formFile.type === 'application/pdf' ? (
-                    <>
-                        <iframe 
-                          src={previewUrl} 
-                          title="Form PDF Preview"
-                          className="w-full h-full border-none"
-                        />
-                        {/* Fallback open button */}
-                        <div className="absolute bottom-4 right-4 opacity-50 hover:opacity-100 transition-opacity">
-                            <a 
-                                href={previewUrl} 
-                                target="_blank" 
-                                rel="noreferrer"
-                                className="flex items-center bg-black/70 text-white text-xs px-3 py-1.5 rounded-full hover:bg-black"
-                            >
-                                <ExternalLink className="w-3 h-3 mr-1" />
-                                Open in new tab
-                            </a>
-                        </div>
-                    </>
-                  ) : (
-                    <div className="w-full h-full overflow-auto flex items-center justify-center p-4">
-                      <img 
-                        src={previewUrl} 
-                        alt="Form Document" 
-                        className="max-w-full shadow-lg border border-slate-700" 
-                      />
-                    </div>
-                  )
-               ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-500">
-                    <FileText className="w-16 h-16 mb-4 opacity-50" />
-                    <p>Generating preview...</p>
-                  </div>
-               )}
-            </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 min-h-0">
+        {/* Preview */}
+        <div className="bg-kng-bg-elevated rounded-kng-xl overflow-hidden shadow-kng-lg flex flex-col border border-kng-border">
+          <div className="p-3 bg-kng-surface border-b border-kng-border flex justify-between items-center">
+            <span className="text-xs font-medium text-kng-text-secondary uppercase tracking-wider">
+              PDF Preview (live)
+            </span>
+            <span className="text-xs text-kng-text-muted">
+              {formFile.file.name}
+            </span>
           </div>
-
-          {/* Right Column: Verification List */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-slate-100 bg-slate-50/50">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-semibold text-slate-800">Field Verification</h3>
-                <div className="flex space-x-2 text-xs">
-                  <button 
-                    onClick={() => setFilterMode('ALL')}
-                    className={`px-3 py-1 rounded-full border transition-colors ${filterMode === 'ALL' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+          <div className="flex-1 bg-kng-bg relative">
+            {previewUrl ? (
+              <>
+                <iframe
+                  src={previewUrl}
+                  title="Form PDF Preview"
+                  className="w-full h-full border-none bg-white"
+                />
+                <div className="absolute bottom-4 right-4 opacity-60 hover:opacity-100 transition-opacity">
+                  <a
+                    href={previewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center bg-kng-bg/80 text-kng-text text-xs px-3 py-1.5 rounded-kng-full hover:bg-kng-bg border border-kng-border"
                   >
-                    All ({totalCount})
-                  </button>
-                  {fieldsRequiresAttention.length > 0 && (
-                     <button 
-                      onClick={() => setFilterMode('ATTENTION')}
-                      className={`px-3 py-1 rounded-full border transition-colors flex items-center ${filterMode === 'ATTENTION' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-white text-amber-600 border-slate-200 hover:bg-amber-50'}`}
-                    >
-                      <AlertTriangle className="w-3 h-3 mr-1" />
-                      Needs Review ({fieldsRequiresAttention.length})
-                    </button>
-                  )}
+                    <ExternalLink className="w-3 h-3 mr-1" />
+                    In neuem Tab öffnen
+                  </a>
                 </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-kng-text-muted">
+                <FileText className="w-16 h-16 mb-4 opacity-50" />
+                <p>Preview wird erstellt …</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Field List */}
+        <div className="bg-kng-bg-elevated rounded-kng-xl shadow-kng-md border border-kng-border flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-kng-border bg-kng-surface">
+            <div className="flex justify-between items-center">
+              <h3 className="font-semibold text-kng-text">Feld-Verifikation</h3>
+              <div className="flex space-x-2 text-xs">
+                <button
+                  onClick={() => setFilterMode('ALL')}
+                  className={`px-3 py-1 rounded-kng-full border transition-colors ${
+                    filterMode === 'ALL'
+                      ? 'bg-kng-accent text-kng-bg border-kng-accent'
+                      : 'bg-kng-bg-elevated text-kng-text-secondary border-kng-border hover:bg-kng-surface-hover'
+                  }`}
+                >
+                  Alle ({totalCount})
+                </button>
+                {fieldsRequiresAttention.length > 0 && (
+                  <button
+                    onClick={() => setFilterMode('ATTENTION')}
+                    className={`px-3 py-1 rounded-kng-full border transition-colors flex items-center ${
+                      filterMode === 'ATTENTION'
+                        ? 'bg-kng-warning text-kng-bg border-kng-warning'
+                        : 'bg-kng-bg-elevated text-kng-warning border-kng-border hover:bg-kng-surface-hover'
+                    }`}
+                  >
+                    <AlertTriangle className="w-3 h-3 mr-1" />
+                    Prüfen ({fieldsRequiresAttention.length})
+                  </button>
+                )}
               </div>
             </div>
-            
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/30">
-              {displayedFields.map((field) => {
-                const idx = field.originalIndex;
-                const status = field.validation?.status || 'VALID';
-                const isVerified = field.isVerified;
-                
-                let statusBorder = isVerified ? "border-emerald-200" : "border-slate-200";
-                let statusBg = isVerified ? "bg-emerald-50/30" : "bg-white";
+          </div>
 
-                if (!isVerified) {
-                  if (status === 'INVALID') {
-                    statusBorder = "border-red-200";
-                    statusBg = "bg-red-50/50";
-                  } else if (status === 'WARNING') {
-                    statusBorder = "border-amber-200";
-                    statusBg = "bg-amber-50/50";
-                  }
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-kng-bg">
+            {displayedFields.map((field) => {
+              const idx = field.originalIndex;
+              const status = field.validation?.status ?? 'VALID';
+              const isVerified = !!field.isVerified;
+
+              let statusBorder = isVerified
+                ? 'border-kng-success'
+                : 'border-kng-border';
+              let statusBg = 'bg-kng-bg-elevated';
+
+              if (!isVerified) {
+                if (status === 'INVALID') {
+                  statusBorder = 'border-kng-error';
+                } else if (status === 'WARNING') {
+                  statusBorder = 'border-kng-warning';
                 }
+              }
 
-                return (
-                  <div 
-                    key={idx} 
-                    className={`relative group rounded-lg border transition-all duration-200 p-3 shadow-sm ${activeField === idx ? 'ring-1 ring-indigo-500 border-indigo-500 shadow-md z-10' : statusBorder} ${statusBg}`}
-                    onFocus={() => setActiveField(idx)}
-                    onBlur={() => setActiveField(null)}
-                  >
-                    <div className="flex items-start gap-3">
-                      <button
-                        onClick={() => toggleVerify(idx)}
-                        className={`mt-1 flex-shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${isVerified ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-300 text-transparent hover:border-emerald-400'}`}
-                        title={isVerified ? "Mark as unverified" : "Mark as verified"}
-                      >
-                        <Check className="w-3.5 h-3.5" strokeWidth={3} />
-                      </button>
+              return (
+                <div
+                  key={idx}
+                  className={`relative group rounded-kng-md border transition-all duration-200 p-3 shadow-kng-sm ${
+                    activeField === idx
+                      ? 'ring-1 ring-kng-accent border-kng-accent shadow-kng-md z-10'
+                      : statusBorder
+                  } ${statusBg}`}
+                  onFocus={() => setActiveField(idx)}
+                  onBlur={() => setActiveField(null)}
+                >
+                  <div className="flex items-start gap-3">
+                    <button
+                      onClick={() => toggleVerify(idx)}
+                      className={`mt-1 flex-shrink-0 w-5 h-5 rounded-kng-sm border flex items-center justify-center transition-colors ${
+                        isVerified
+                          ? 'bg-kng-success border-kng-success text-kng-bg'
+                          : 'bg-kng-bg border-kng-border text-transparent hover:border-kng-success'
+                      }`}
+                      title={
+                        isVerified
+                          ? 'Als unbestätigt markieren'
+                          : 'Als bestätigt markieren'
+                      }
+                    >
+                      <Check className="w-3.5 h-3.5" strokeWidth={3} />
+                    </button>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-center mb-1">
-                          <label className={`text-xs font-semibold uppercase tracking-wider truncate ${isVerified ? 'text-emerald-700' : 'text-slate-600'}`}>
-                            {field.label || field.key || "Unknown Field"}
-                          </label>
-                          {!isVerified && status !== 'VALID' && (
-                            <span className={`flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded ${status === 'INVALID' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                               {status === 'INVALID' ? <XCircle className="w-3 h-3 mr-1"/> : <AlertTriangle className="w-3 h-3 mr-1"/>}
-                               {status}
-                            </span>
-                          )}
-                        </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-center mb-1">
+                        <label
+                          className={`text-xs font-semibold uppercase tracking-wider truncate ${
+                            isVerified
+                              ? 'text-kng-success'
+                              : 'text-kng-text-secondary'
+                          }`}
+                        >
+                          {field.label || field.key || 'Unbekanntes Feld'}
+                        </label>
+                        {!isVerified && status !== 'VALID' && (
+                          <span
+                            className={`flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-kng-sm ${
+                              status === 'INVALID'
+                                ? 'bg-kng-error text-kng-bg'
+                                : 'bg-kng-warning text-kng-bg'
+                            }`}
+                          >
+                            {status === 'INVALID' ? (
+                              <XCircle className="w-3 h-3 mr-1" />
+                            ) : (
+                              <AlertTriangle className="w-3 h-3 mr-1" />
+                            )}
+                            {status}
+                          </span>
+                        )}
+                      </div>
 
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={field.value}
-                            onChange={(e) => handleUpdate(idx, e.target.value)}
-                            className={`block w-full rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors border ${isVerified ? 'border-emerald-200 text-emerald-900 bg-emerald-50/50' : 'border-slate-300 text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'}`}
-                            placeholder="Empty"
-                          />
-                        </div>
-                        {(!isVerified && field.validation?.suggestion && status !== 'VALID') && (
-                          <button 
+                      <input
+                        type="text"
+                        value={field.value}
+                        onChange={(e) => handleUpdate(idx, e.target.value)}
+                        className="block w-full rounded-kng-sm px-2.5 py-1.5 text-sm font-medium transition-colors border border-kng-border bg-kng-surface text-kng-text placeholder-kng-text-muted focus:border-kng-accent focus:outline-none focus:ring-1 focus:ring-kng-accent"
+                        placeholder="leer"
+                      />
+
+                      {!isVerified &&
+                        field.validation?.suggestion &&
+                        status !== 'VALID' && (
+                          <button
                             onClick={() => applySuggestion(idx)}
-                            className="mt-2 flex items-center text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors"
+                            className="mt-2 flex items-center text-xs font-bold text-kng-accent hover:brightness-110 bg-kng-surface hover:bg-kng-surface-hover px-2 py-1 rounded-kng-sm transition-colors border border-kng-border"
                           >
                             <ArrowRight className="w-3 h-3 mr-1" />
-                            Accept: "{field.validation.suggestion}"
+                            Übernehmen: "{field.validation.suggestion}"
                           </button>
                         )}
-                      </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
         </div>
-      ) : (
-        /* ================= FORM VIEW (Overlay with Drag & Drop) ================= */
-        <div className="bg-slate-200 rounded-xl overflow-auto shadow-inner flex-1 border border-slate-300 relative p-8 flex justify-center">
-            
-            <div 
-              ref={containerRef}
-              className="relative inline-block shadow-2xl transition-cursor bg-white" 
-              style={{ 
-                cursor: draggingField !== null ? 'grabbing' : 'default'
-              }}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-            > 
-                {/* Background Image/PDF */}
-                {formFile.type === 'application/pdf' ? (
-                    <div className="flex flex-col items-center justify-center p-20 bg-slate-50 border border-slate-200 text-center" style={{ width: '794px', height: '1123px' }}>
-                         <FileText className="w-20 h-20 text-slate-300 mb-4" />
-                         <h3 className="text-xl font-bold text-slate-800">Visual Editing Unavailable for PDF</h3>
-                         <p className="text-slate-500 max-w-sm mt-2">
-                            The visual drag-and-drop editor works best with Image uploads. 
-                            For this PDF, please use the List View to verify data or Download to see the final result.
-                         </p>
-                         <button 
-                          onClick={() => setViewMode('LIST')}
-                          className="mt-6 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                        >
-                          Switch to List View
-                        </button>
-                    </div>
-                ) : (
-                  <img 
-                    src={formFile.previewUrl!} 
-                    className="block max-w-full h-auto pointer-events-none opacity-90 select-none"
-                    style={{ maxHeight: '1200px' }}
-                    alt="Form Background"
-                  />
-                )}
-                
-                {/* Fallback info if not visual mode compatible */}
-                {!fields.some(f => f.coordinates) && formFile.type !== 'application/pdf' && (
-                   <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20 backdrop-blur-sm">
-                      <div className="text-center p-6 max-w-md">
-                        <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
-                        <h3 className="text-lg font-bold text-slate-900">Visual Mode Not Available</h3>
-                        <p className="text-slate-600 mt-2">
-                          Coordinates were not extracted for this document. Please use the List View to edit fields.
-                        </p>
-                        <button 
-                          onClick={() => setViewMode('LIST')}
-                          className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                        >
-                          Switch to List View
-                        </button>
-                      </div>
-                   </div>
-                )}
-
-                {/* Overlay Inputs (Only show if not PDF, or if we force it but it's blank bg) */}
-                {formFile.type !== 'application/pdf' && fields.map((field, idx) => {
-                  if (!field.coordinates) return null;
-                  
-                  // Coordinate conversion (0-1000 scale to percentage)
-                  const left = (field.coordinates.x / 1000) * 100;
-                  const top = (field.coordinates.y / 1000) * 100;
-                  
-                  const status = field.validation?.status || 'VALID';
-                  let borderColor = 'border-indigo-400 bg-white/60';
-                  if (field.isVerified) borderColor = 'border-emerald-500 bg-emerald-50/70';
-                  else if (status === 'INVALID') borderColor = 'border-red-500 bg-red-50/70';
-                  else if (status === 'WARNING') borderColor = 'border-amber-500 bg-amber-50/70';
-
-                  const isDragging = draggingField === idx;
-                  const isCheckbox = field.value === 'X';
-
-                  return (
-                    <div
-                      key={idx}
-                      className={`absolute group hover:z-50 ${isDragging ? 'z-50 cursor-grabbing' : 'z-10'}`}
-                      style={{
-                        left: `${left}%`,
-                        top: `${top}%`,
-                        width: isCheckbox ? '20px' : '200px',
-                        transform: 'translateY(-50%)', // Center vertically
-                      }}
-                      onMouseDown={(e) => handleDragStart(e, idx)}
-                    >
-                      <div className="relative">
-                        {/* Drag Handle (Visible on Hover) */}
-                        <div className={`absolute -top-3 -left-3 cursor-grab p-1 bg-slate-800 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity ${isDragging ? 'opacity-100' : ''}`}>
-                          <Move className="w-3 h-3" />
-                        </div>
-
-                        {isCheckbox ? (
-                          <div className={`w-6 h-6 border-2 flex items-center justify-center font-bold text-black ${borderColor}`}>
-                             X
-                          </div>
-                        ) : (
-                          <input
-                            type="text"
-                            value={field.value}
-                            onChange={(e) => handleUpdate(idx, e.target.value)}
-                            onFocus={() => setActiveField(idx)}
-                            className={`
-                              w-full px-1 py-0.5 text-xs font-medium border-2 rounded transition-all shadow-sm
-                              focus:ring-2 focus:ring-offset-1 focus:z-10 focus:bg-white
-                              ${borderColor}
-                            `}
-                            style={{
-                              fontFamily: 'Courier, monospace',
-                              color: 'black',
-                              background: 'rgba(255, 255, 255, 0.7)'
-                            }}
-                          />
-                        )}
-                        
-                        {/* Validation Icon Overlay */}
-                        {!field.isVerified && status !== 'VALID' && (
-                           <div className="absolute -top-2 -right-2 bg-white rounded-full shadow-md z-20 pointer-events-none">
-                              {status === 'INVALID' 
-                                ? <XCircle className="w-4 h-4 text-red-500" /> 
-                                : <AlertTriangle className="w-4 h-4 text-amber-500" />
-                              }
-                           </div>
-                        )}
-                        
-                        {/* Tooltip on Hover */}
-                        <div className="absolute opacity-0 group-hover:opacity-100 bottom-full left-0 mb-1 bg-slate-800 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap pointer-events-none z-30 transition-opacity">
-                           {field.label}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 };
