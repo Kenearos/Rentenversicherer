@@ -52,6 +52,61 @@ Im Prompt an Claude fest eingebaut (siehe `server/claudeRunner.ts`):
 - Keine geratenen Werte — bei Unsicherheit leer + WARNING
 - PDF nie flatten
 
+## Deployment (Hetzner / Docker)
+
+Auf dem Server (Verzeichnis mit `docker-compose.yml`) genügt ein Befehl:
+
+```bash
+./deploy.sh                         # deployt main
+./deploy.sh claude/session-start-vyf1uy   # deployt einen bestimmten Branch
+```
+
+`deploy.sh` holt den Branch, baut das Image neu und startet den Container.
+Nach dem Start loggt der Server die gewählte Temp-Basis
+(`[server] temp base: …`).
+
+### Temp-Verzeichnis
+
+Der Server legt pro Request ein temporäres Arbeitsverzeichnis an. Die Basis
+wird beim Start per Schreib-Probe ermittelt: `RENTENV_TMP_DIR` (falls gesetzt),
+sonst `os.tmpdir()`, sonst der app-lokale Fallback `./.rentenv-tmp`. Ist `/tmp`
+im Container kaputt (z.B. totes Symlink) oder für den `node`-User nicht
+beschreibbar, weicht der Server automatisch auf den Fallback aus, statt
+Requests mit `ENOENT … mkdir '/tmp/rentenv-…'` abzubrechen. Bei Bedarf explizit
+setzen — in `docker-compose.yml` unter `environment:`:
+
+```yaml
+RENTENV_TMP_DIR: /app/.rentenv-tmp
+```
+
+### Optional: Auto-Deploy (pull-basiert)
+
+Für eine abgeschottete Box (kein eingehendes SSH) ist ein pull-basierter Timer
+am robustesten. Beispiel als systemd-Timer auf dem Host:
+
+```ini
+# /etc/systemd/system/rentenv-deploy.service
+[Service]
+Type=oneshot
+WorkingDirectory=/pfad/zu/Rentenversicherer
+ExecStart=/pfad/zu/Rentenversicherer/deploy.sh main
+```
+
+```ini
+# /etc/systemd/system/rentenv-deploy.timer
+[Timer]
+OnCalendar=*:0/10          # alle 10 Minuten auf neue Commits prüfen
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl enable --now rentenv-deploy.timer
+```
+
+Danach deployt sich jeder neue Commit auf dem konfigurierten Branch von selbst.
+
 ## Dokumentation
 
 - [`PLAN.md`](./PLAN.md) — Zweck, Scope, Architektur
