@@ -2,7 +2,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,39 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+// Temp-Basis einmalig beim Start auflösen. Verlässt man sich blind auf
+// os.tmpdir(), schlägt das Anlegen pro Request mit ENOENT/EACCES fehl, wenn
+// /tmp im Deployment kaputt ist (totes Symlink, fehlendes TMPDIR-Ziel, für
+// UID 1000 nicht beschreibbar). Wir probieren Kandidaten durch und nehmen den
+// ersten, in den wir tatsächlich schreiben können — mit app-lokalem Fallback.
+function resolveTmpBase(): string {
+  const candidates = [
+    process.env.RENTENV_TMP_DIR,
+    os.tmpdir(),
+    path.join(process.cwd(), '.rentenv-tmp'),
+  ].filter((c): c is string => typeof c === 'string' && c.length > 0);
+
+  for (const base of candidates) {
+    try {
+      mkdirSync(base, { recursive: true });
+      // Schreib-Probe: bestätigt, dass die Basis wirklich beschreibbar ist und
+      // nicht nur (scheinbar) existiert.
+      const probe = path.join(base, `.probe-${process.pid}`);
+      writeFileSync(probe, '');
+      rmSync(probe, { force: true });
+      return base;
+    } catch {
+      // nächsten Kandidaten versuchen
+    }
+  }
+
+  // Letzter Ausweg: os.tmpdir() zurückgeben und den eigentlichen Fehler beim
+  // Request sichtbar werden lassen.
+  return os.tmpdir();
+}
+
+const TMP_BASE = resolveTmpBase();
 
 const app = express();
 
@@ -80,7 +113,7 @@ app.post(
     }
 
     const requestId = randomUUID();
-    const tempDir = path.join(os.tmpdir(), `rentenv-${requestId}`);
+    const tempDir = path.join(TMP_BASE, `rentenv-${requestId}`);
     const formName = filenameForMime('form', formFile.mimetype);
 
     try {
@@ -136,6 +169,7 @@ if (IS_PROD && existsSync(DIST_DIR)) {
 
 app.listen(PORT, HOST, () => {
   console.log(`[server] listening on http://${HOST}:${PORT}`);
+  console.log(`[server] temp base: ${TMP_BASE}`);
 });
 
 function filenameForMime(base: string, mime: string): string {

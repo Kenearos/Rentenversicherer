@@ -90,6 +90,7 @@ dist-ssr/
 # Server temp uploads (falls lokal ausgelagert)
 /tmp/
 /uploads/
+/.rentenv-tmp/
 
 # Test-Fixtures (nicht committen — enthalten ggf. echte Formulare)
 /test-fixtures/
