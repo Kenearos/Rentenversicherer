@@ -6,7 +6,11 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runClaude, type ClaudeFieldSpec } from './claudeRunner.ts';
+import {
+  runClaude,
+  type ClaudeFieldSpec,
+  type ClaudeFormResponse,
+} from './claudeRunner.ts';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const HOST = process.env.HOST ?? '127.0.0.1';
@@ -70,6 +74,26 @@ function resolveTmpBase(): string {
 
 const TMP_BASE = resolveTmpBase();
 
+// Langläufer-Jobs: claude -p dauert 30–120s+. Würde die HTTP-Verbindung so
+// lange offen gehalten, kappt jeder Reverse-Proxy (oder ein kurzer Netz-
+// Hänger) sie und der Browser bekommt nur "Failed to fetch". Stattdessen
+// kehrt POST sofort mit einer Job-ID zurück, das Frontend pollt per GET.
+type Job =
+  | { status: 'pending'; createdAt: number }
+  | { status: 'done'; createdAt: number; result: ClaudeFormResponse }
+  | { status: 'error'; createdAt: number; error: string };
+
+const jobs = new Map<string, Job>();
+const JOB_TTL_MS = 15 * 60 * 1000;
+
+// Abgelaufene Jobs regelmäßig aufräumen, damit die Map nicht wächst.
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (now - job.createdAt > JOB_TTL_MS) jobs.delete(id);
+  }
+}, 60 * 1000).unref();
+
 const app = express();
 
 app.post(
@@ -116,11 +140,12 @@ app.post(
     const tempDir = path.join(TMP_BASE, `rentenv-${requestId}`);
     const formName = filenameForMime('form', formFile.mimetype);
 
+    // Quelldateien schreiben — Fehler hier sind echte 5xx (kein claude-Lauf).
+    const sourceNames: string[] = [];
     try {
       await mkdir(tempDir, { recursive: true });
       await writeFile(path.join(tempDir, formName), formFile.buffer);
 
-      const sourceNames: string[] = [];
       for (let i = 0; i < sourceFiles.length; i++) {
         const f = sourceFiles[i];
         const name = filenameForMime(`source_${i + 1}`, f.mimetype);
@@ -131,28 +156,72 @@ app.post(
       if (sourceText.length > 0) {
         await writeFile(path.join(tempDir, 'source_text.txt'), sourceText);
       }
-
-      const result = await runClaude(tempDir, {
-        formFilename: formName,
-        sourceFilenames: sourceNames,
-        hasSourceText: sourceText.length > 0,
-        fields: fieldSpecs,
-      });
-      res.json(result);
     } catch (e: unknown) {
-      next(e);
-    } finally {
       if (existsSync(tempDir)) {
         rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
+      next(e);
+      return;
     }
+
+    // Job registrieren und SOFORT antworten — claude läuft im Hintergrund.
+    jobs.set(requestId, { status: 'pending', createdAt: Date.now() });
+    res.status(202).json({ jobId: requestId });
+
+    runClaude(tempDir, {
+      formFilename: formName,
+      sourceFilenames: sourceNames,
+      hasSourceText: sourceText.length > 0,
+      fields: fieldSpecs,
+    })
+      .then((result) => {
+        jobs.set(requestId, {
+          status: 'done',
+          createdAt: Date.now(),
+          result,
+        });
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('[claude job error]', requestId, msg);
+        jobs.set(requestId, {
+          status: 'error',
+          createdAt: Date.now(),
+          error: msg,
+        });
+      })
+      .finally(() => {
+        if (existsSync(tempDir)) {
+          rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        }
+      });
   }
 );
+
+// Status/Ergebnis eines Jobs. Bewusst kurze Requests -> proxy-sicher.
+app.get('/api/process/:jobId', (req: Request, res: Response) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) {
+    res
+      .status(404)
+      .json({ error: 'Job nicht gefunden (abgelaufen oder Server neugestartet).' });
+    return;
+  }
+  if (job.status === 'pending') {
+    res.json({ status: 'pending' });
+    return;
+  }
+  if (job.status === 'error') {
+    res.json({ status: 'error', error: 'Claude CLI failed', details: job.error });
+    return;
+  }
+  res.json({ status: 'done', result: job.result });
+});
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const msg = err instanceof Error ? err.message : String(err);
   console.error('[server error]', msg);
-  res.status(502).json({ error: 'Claude CLI failed', details: msg });
+  res.status(500).json({ error: 'Serverfehler beim Vorbereiten', details: msg });
 });
 
 app.get('/api/health', (_req, res) => {
